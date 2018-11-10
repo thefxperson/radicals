@@ -1,3 +1,6 @@
 *.png
 *.gnt
 kradfile/
+GAN stuff/graphs/
+GAN stuff/out/
+GAN stuff/logs/
