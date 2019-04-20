@@ -1,6 +1,11 @@
 *.png
 *.gnt
+*.pt
+*.pyc
+*.npz
 kradfile/
 GAN stuff/graphs/
 GAN stuff/out/
 GAN stuff/logs/
+GAN stuff/ETL9G/
+data/

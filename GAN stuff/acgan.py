@@ -16,9 +16,9 @@ tf.logging.set_verbosity(tf.logging.FATAL)
 #global const
 num_classes = 10
 latent_size = 100       #noise size
-epochs = 2+num_classes
-batch_size = 10*num_classes
-learning_rate = 0.0002
+epochs = 25
+batch_size = 32
+learning_rate = 0.0005   
 beta_1 = 0.5            #adam parameter
 
 def make_generator():
@@ -27,31 +27,36 @@ def make_generator():
     h = keras.layers.multiply([noise, image_class])     #hadamard product between noise and class conditional embedding
     #network
     gen = keras.Sequential([
-        keras.layers.Dense(3*3*384, input_dim=latent_size, activation="relu"),
-        keras.layers.Reshape((3,3,384)),
-        keras.layers.Conv2DTranspose(192, 5, strides=1, padding="valid", activation="relu", kernel_initializer="glorot_normal"),    #upsample to (7x7) with deconvolutional layer
+        keras.layers.Dense(4*4*256, input_dim=latent_size, activation="relu"),
+        keras.layers.Reshape((4,4,256)),
+        keras.layers.Conv2DTranspose(128, 5, strides=2, padding="same", activation="relu", kernel_initializer="glorot_normal"),    #upsample to (8x8) with deconvolutional layer
         keras.layers.BatchNormalization(),
-        keras.layers.Conv2DTranspose(96, 5, strides=2, padding="same", activation="relu", kernel_initializer="glorot_normal"),  #upsample to (14x14) with deconvolutional layer
+        keras.layers.Conv2DTranspose(128, 5, strides=2, padding="same", activation="relu", kernel_initializer="glorot_normal"),  #upsample to (16x16) with deconvolutional layer
         keras.layers.BatchNormalization(),
-        keras.layers.Conv2DTranspose(1, 5, strides=2, padding="same", activation="tanh", kernel_initializer="glorot_normal")])  #upsample to (28x28) with deconvolutional layer
+        keras.layers.Conv2DTranspose(256, 3, strides=2, padding="same", activation="relu", kernel_initializer="glorot_normal"),  #upsample to (32x32) with deconvolutional layer
+        keras.layers.BatchNormalization(),
+        keras.layers.Conv2DTranspose(256, 3, strides=2, padding="same", activation="relu", kernel_initializer="glorot_normal"),  #upsample to (64x64) with deconvolutional layer
+        keras.layers.BatchNormalization(),
+        keras.layers.Conv2DTranspose(1, 2, strides=2, padding="same", activation="tanh", kernel_initializer="glorot_normal")])  #upsample to (128x128) with deconvolutional layer
+    #gen.summary()
     gen_img = gen(h)    #generated image
     return keras.Model([noise, label], gen_img)
 
 def make_discriminator():
     #input
-    image = keras.layers.Input(shape=(28, 28, 1))
+    image = keras.layers.Input(shape=(128, 128, 1))
     #network
     dis = keras.Sequential([
-        keras.layers.Conv2D(32, 3, padding="same", strides=2, input_shape=(28,28,1)),
+        keras.layers.Conv2D(128, 5, padding="same", strides=2, input_shape=(128,128,1)),
         keras.layers.LeakyReLU(0.2),
         keras.layers.Dropout(0.3),
-        keras.layers.Conv2D(64, 3, padding="same", strides=1),
+        keras.layers.Conv2D(128, 5, padding="same", strides=1),
         keras.layers.LeakyReLU(0.2),
         keras.layers.Dropout(0.3),
         keras.layers.Conv2D(128, 3, padding="same", strides=2),
         keras.layers.LeakyReLU(0.2),
         keras.layers.Dropout(0.3),
-        keras.layers.Conv2D(256, 3, padding="same", strides=1),
+        keras.layers.Conv2D(128, 3, padding="same", strides=1),
         keras.layers.LeakyReLU(0.2),
         keras.layers.Dropout(0.3),
         keras.layers.Flatten()])
@@ -72,7 +77,7 @@ def plot(samples):
         ax.set_xticklabels([])
         ax.set_yticklabels([])
         ax.set_aspect('equal')
-        plt.imshow(sample.reshape(28, 28), cmap='Greys_r')
+        plt.imshow(sample.reshape(128, 128), cmap='Greys_r')
     return fig
 
 #normalize data to be between [-1, 1] (applied using dataset.map to parallelize)
@@ -110,8 +115,8 @@ y_placeholder = tf.placeholder(y_train.dtype, y_train.shape)
 #create dataset from placeholders. Repeat the images pulled 30 times (math below). Shuffle to the size of the dataset so order is random. normalize data between [-1, 1]. split into batches, and prefetch 1 batch
 #MNIST 60000 images 10 classes. thus 6k ex/class. ETL9G has 200ex/class. 30x that so they have the same number of images per epoch and epochs can remain the same
 dataset = tf.data.Dataset.from_tensor_slices((x_placeholder, y_placeholder)).repeat(30).shuffle(30*200*num_classes).map(normalize_data).batch(batch_size=batch_size).prefetch(1)
-dataset.map(normalize_data)
 iterator = dataset.make_initializable_iterator()
+next_element = iterator.get_next()
 
 
 #training
@@ -128,10 +133,16 @@ for epoch in range(epochs):
     disc_loss = []
     for batch in range(num_batches):
         #real images / labels
-        image_batch, real_labels = sess.run(iterator.get_next())
+        image_batch, real_labels = sess.run(next_element)
+
+        #print reference image
+        if epoch == 0 and batch == 0:
+            fig = plot(image_batch[0:10])
+            plt.savefig('out/base.png'.format(str(epoch+1).zfill(3)), bbox_inches='tight')
+            plt.close(fig)
 
         #noise / random labels
-        noise = np.random.uniform(-1,1, (batch_size, latent_size))
+        noise = np.random.normal(size=(batch_size, latent_size))
         fake_labels = np.random.randint(0, num_classes, batch_size)
 
         #fake images
@@ -139,8 +150,8 @@ for epoch in range(epochs):
 
         #combine real/fake
         x = np.concatenate((image_batch, gen_images))
-        soft_zero, soft_one = 0, 0.95       #helps train GAN using one-sided soft real/fake labels
-        y = np.array([soft_one] * batch_size + [soft_zero] * batch_size)                    #array of Ts, then Fs. T=.95 instead of 1, F = 0
+        soft_zero, soft_one = 0.05, 0.95       #helps train GAN using one-sided soft real/fake labels
+        y = np.array([soft_zero] * batch_size + [soft_one] * batch_size)                    #array of Ts, then Fs. T=.05 instead of 0, F = .95
         aux_y = np.concatenate((real_labels, fake_labels), axis=0)
 
         #train disc
@@ -156,7 +167,7 @@ for epoch in range(epochs):
 
         #train gen
         #we want gen to trick the disc. -- therefore we want all y labels to say not fake
-        trick = np.ones(2*batch_size) * soft_one
+        trick = np.ones(2*batch_size) * soft_zero
         gl = combined.train_on_batch([noise, fake_labels.reshape((-1,1))], [trick, fake_labels])
 
         #update losses
@@ -169,6 +180,10 @@ for epoch in range(epochs):
     samples = generator.predict([noise, labels.reshape((-1,1))])
     fig = plot(samples)
     plt.savefig('out/{}.png'.format(str(epoch+1).zfill(3)), bbox_inches='tight')
+    plt.close(fig)
+
+    #print losses
+    print("Disc Loss: {} Gen Loss: {}".format(np.mean(gen_loss), np.mean(disc_loss)))
 
     #fetch next epoch's data
     sess.run(iterator.initializer, feed_dict={x_placeholder: x_train, y_placeholder: y_train})

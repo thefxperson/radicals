@@ -39,8 +39,9 @@ def retrieve(filename, record_id):
     iP = Image.frombytes("F", (128, 127), data[14], "bit", 4).convert("P")
     enhanced = ImageEnhance.Brightness(iP).enhance(16)
     arr = np.asarray(enhanced)
+    pad = np.vstack([np.zeros(128), arr])
 
-    return (arr, kanji)
+    return (pad, kanji)
 
 def make_dataset(num_classes):
     #there are 200 characters of each class. 50 files * 4 writers per file
@@ -49,6 +50,8 @@ def make_dataset(num_classes):
 
     x = []
     y = []
+    y_one = 0   #variable to convert string to onehot
+    c_dict = {}
     for i in range(50):
         filename = "ETL9G/ETL9G_{0:02}".format(i+1) #i starts at 0, files start at 1
         for j in range(len(chars)):
@@ -56,7 +59,17 @@ def make_dataset(num_classes):
                 loc = chars[j] + k*3036
                 rec = retrieve(filename, loc)
                 x.append(rec[0])
-                y.append(rec[1])
+                #populate c_dict if first time through
+                if i == 0:
+                    if rec[1] in c_dict:
+                        pass
+                    else:
+                        c_dict[rec[1]] = y_one
+                        y_one += 1
+
+                y.append(c_dict[rec[1]])
+
     x_train = np.asarray(x).astype(np.float32)
     y_train = np.asarray(y)
+    #y_train = np.zeros((y.size, y.max()+1))    #one_hot
     return x_train, y_train
